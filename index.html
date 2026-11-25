@@ -1,0 +1,1110 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <title>MaiSport</title>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="MaiSport"/>
+  <meta name="theme-color" content="#050707"/>
+  <link rel="manifest" href="manifest.json"/>
+  <link rel="apple-touch-icon" href="icon-192.png"/>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{background:#050707;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#ecfdf9;-webkit-tap-highlight-color:transparent;}
+    input,button{font-family:inherit;}
+    input::placeholder{color:#3d5350;}
+    input[type=date]{color-scheme:dark;}
+    button{cursor:pointer;}
+    button:disabled{cursor:default;}
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+// ── Paramètres ─────────────────────────────────────────────────────────
+const DEFAULT_PROFILE = { name:"Mai", height:"161", age:"", weight:"66", finalGoal:"60", bmr:"" };
+const TARGET_ACTIVE_MONTH = 20;   // jours avec activité physique / mois
+const TARGET_BOXE_MONTH   = 3;    // séances de boxe / mois
+const TARGET_ROLLER_MONTH = 3;    // séances de roller / mois
+const MONTH_ALERT_MIN_DAYS = 7;   // jours écoulés dans le mois avant d'alerter sur ces objectifs
+const TARGET_SLEEP_MIN   = 450;   // 7h30
+const TARGET_STEPS       = 6000;
+const DEFAULT_DEFICIT    = 400;   // si aucun objectif mensuel n'est défini
+const ALERT_RATIO        = 0.8;   // alerte sous 80 %
+const KCAL_PER_KG        = 7700;
+
+// ── Couleurs ───────────────────────────────────────────────────────────
+const C = {
+  bg:"#050707", card:"#0d1413", inner:"#070b0b", border:"#1a2826",
+  tq:"#14b8a6", tqL:"#2dd4bf", tqXL:"#5eead4", tqD:"#0f766e", tqDeep:"#042f2e",
+  text:"#ecfdf9", muted:"#8aa6a2", dim:"#4a605d",
+  ok:"#4ade80", warn:"#fbbf24", bad:"#f87171",
+};
+
+const SPORTS = [
+  { id:"boxe",   label:"Boxe",          icon:"🥊", mode:"calc" },
+  { id:"course", label:"Course à pied", icon:"🏃‍♀️", mode:"fitbit", dist:true },
+  { id:"muscu",  label:"Musculation",   icon:"🏋️‍♀️", mode:"kcal", named:true, ph:"ex : Haut du corps, Fessiers, Full body…" },
+  { id:"velo",   label:"Vélo",          icon:"🚴‍♀️", mode:"fitbit", dist:true },
+  { id:"ski",    label:"Ski",           icon:"⛷️", mode:"fitbit", dist:true },
+  { id:"maison", label:"Sport maison",  icon:"🏠", mode:"timeKcal", named:true, ph:"ex : Pilates, HIIT, Yoga, Abdos…" },
+  { id:"roller", label:"Roller",        icon:"🛼", mode:"calc" },
+  { id:"autre",  label:"Autre",         icon:"✏️", mode:"fitbit", named:true, ph:"ex : Danse, Padel, Randonnée…" },
+];
+const BOXE_LEVELS = [
+  { lvl:1, label:"Léger",   rate:4.5, desc:"Technique, shadow boxing" },
+  { lvl:2, label:"Moyen",   rate:5.6, desc:"Sac / pattes d'ours, rythme régulier" },
+  { lvl:3, label:"Intense", rate:6.7, desc:"Rounds rapides, sparring, cardio boxing" },
+];
+const MOODS = [
+  { id:"motivee",  icon:"💪", label:"Motivée",   score:5 },
+  { id:"bien",     icon:"🙂", label:"Bien",      score:4 },
+  { id:"neutre",   icon:"😐", label:"Neutre",    score:3 },
+  { id:"fatiguee", icon:"🥱", label:"Fatiguée",  score:2 },
+  { id:"stressee", icon:"😣", label:"Stressée",  score:2 },
+  { id:"bas",      icon:"😔", label:"Moral bas", score:1 },
+];
+const moodOf = id => MOODS.find(m=>m.id===id);
+const DEFAULT_MET = { course:9.8, velo:7, ski:8, roller:7.5, autre:5 };
+
+const PHASES = {
+  menstruelle:  { label:"Menstruelle",  icon:"🩸", color:"#fb7185",
+    energy:"Énergie souvent plus basse",
+    tip:"Privilégie des séances douces à modérées (marche, mobilité, boxe niveau 1–2). Écoute ton corps et hydrate-toi bien." },
+  folliculaire: { label:"Folliculaire", icon:"🌱", color:"#2dd4bf",
+    energy:"L'énergie remonte",
+    tip:"Bonne période pour intensifier et progresser : musculation, fractionné, boxe niveau 3–4." },
+  ovulatoire:   { label:"Ovulatoire",   icon:"☀️", color:"#fde68a",
+    energy:"Pic d'énergie et de force fréquent",
+    tip:"Idéal pour les séances les plus intenses. Soigne l'échauffement." },
+  luteale:      { label:"Lutéale",      icon:"🌙", color:"#a78bfa",
+    energy:"Fatigue et fringales possibles en fin de phase",
+    tip:"Garde la régularité avec une intensité modérée et priorise le sommeil. La rétention d'eau peut faire monter la balance de façon temporaire." },
+};
+const PHASE_ORDER = ["menstruelle","folliculaire","ovulatoire","luteale"];
+
+const DAYS   = ["Lun","Mar","Mer","Jeu","Ven","Sam","Dim"];
+const MONTHS = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
+
+// ── Dates ──────────────────────────────────────────────────────────────
+const pad = n => String(n).padStart(2,"0");
+const iso = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const parse = s => { const [y,m,d]=s.split("-").map(Number); return new Date(y,m-1,d); };
+const addDays = (s,n) => { const d=parse(s); d.setDate(d.getDate()+n); return iso(d); };
+const diffDays = (a,b) => Math.round((parse(a)-parse(b))/86400000);
+const todayISO = () => iso(new Date());
+const mondayOf = s => { const d=parse(s); d.setDate(d.getDate()-((d.getDay()+6)%7)); return iso(d); };
+const fmt = s => `${s.slice(8,10)}/${s.slice(5,7)}`;
+const fmtFull = s => `${fmt(s)}/${s.slice(0,4)}`;
+const monthKey = s => s.slice(0,7);
+const daysInMonth = k => { const [y,m]=k.split("-").map(Number); return new Date(y,m,0).getDate(); };
+const monthStart = k => `${k}-01`;
+const monthEnd = k => `${k}-${pad(daysInMonth(k))}`;
+const shiftMonth = (k,n) => { const [y,m]=k.split("-").map(Number); const d=new Date(y,m-1+n,1); return `${d.getFullYear()}-${pad(d.getMonth()+1)}`; };
+const monthLabel = k => { const [y,m]=k.split("-").map(Number); return `${MONTHS[m-1]} ${y}`; };
+
+// ── Utilitaires ────────────────────────────────────────────────────────
+const num = v => { if(v===null||v===undefined||v==="") return null; const n=parseFloat(String(v).replace(",",".")); return isNaN(n)?null:n; };
+const fr = (n,d=0) => n==null ? "—" : n.toLocaleString("fr-FR",{minimumFractionDigits:d,maximumFractionDigits:d});
+const fmtSleep = m => m==null ? "—" : `${Math.floor(m/60)}h${pad(Math.round(m%60))}`;
+const fmtPace = (t,d) => { const p=t/d; let m=Math.floor(p), s=Math.round((p-m)*60); if(s===60){m++;s=0;} return `${m}'${pad(s)}/km`; };
+const avg = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : null;
+function load(key,fb){ try{ const v=localStorage.getItem(key); return v?JSON.parse(v):fb; }catch{ return fb; } }
+function save(key,val){ try{ localStorage.setItem(key,JSON.stringify(val)); }catch{} }
+function linreg(pts){
+  const n=pts.length, mx=avg(pts.map(p=>p[0])), my=avg(pts.map(p=>p[1]));
+  let nu=0, de=0; pts.forEach(([x,y])=>{ nu+=(x-mx)*(y-my); de+=(x-mx)**2; });
+  const slope = de ? nu/de : 0;
+  return { slope, intercept: my-slope*mx };
+}
+const stColor = r => r==null ? C.dim : r>=1 ? C.ok : r>=ALERT_RATIO ? C.warn : C.bad;
+const stLabel = r => r==null ? "Pas assez de données" : r>=1 ? "En bonne voie" : r>=ALERT_RATIO ? "À surveiller" : "Alerte";
+
+// ── Composition corporelle & métabolisme ───────────────────────────────
+function compAt(date, weighins, profile){
+  let weight=null, muscle=null, fatPct=null, bmr=null;
+  weighins.filter(w=>w.date<=date).forEach(w=>{
+    if(w.weight!=null) weight=w.weight;
+    if(w.muscle!=null) muscle=w.muscle;
+    if(w.fatPct!=null) fatPct=w.fatPct;
+    if(w.bmr!=null)    bmr=w.bmr;
+  });
+  weight = weight ?? num(profile.weight) ?? 65;
+  let lbm, known=true;
+  if(fatPct!=null)      lbm = weight*(1-fatPct/100);
+  else if(muscle!=null) lbm = muscle;
+  else { lbm = weight*0.68; known=false; }
+  const fat = weight-lbm;
+  const aw  = lbm + fat*0.2;   // poids "actif" : masse maigre + 20 % de la masse grasse
+  const age = num(profile.age) || 30;
+  const height = num(profile.height) || 161;
+  let bmrVal, bmrSrc;
+  if(bmr!=null)                    { bmrVal=bmr;                    bmrSrc="Boditrax"; }
+  else if(num(profile.bmr)!=null)  { bmrVal=num(profile.bmr);       bmrSrc="Profil"; }
+  else if(known)                   { bmrVal=Math.round(370+21.6*lbm); bmrSrc="Katch-McArdle"; }
+  else                             { bmrVal=Math.round(10*weight+6.25*height-5*age-161); bmrSrc="Mifflin-St Jeor"; }
+  return { weight, muscle, fatPct, lbm, fat, aw, bmr:bmrVal, bmrSrc, known };
+}
+
+function speedMET(id,kmh){
+  if(id==="course") return kmh<8?8:kmh<10?9.8:kmh<12?11.5:13;
+  if(id==="velo")   return kmh<15?5.5:kmh<20?8:kmh<25?10:12;
+  if(id==="ski")    return kmh<15?7:kmh<25?9:11;
+  if(id==="roller") return kmh<12?6:kmh<15?7.5:kmh<18?9.8:kmh<21?12.3:14;
+  return null;
+}
+function computeSession(sp,p,aw){
+  const t=num(p.time), k=num(p.kcal), d=num(p.distance);
+  if(sp.mode==="kcal")     return { kcal:k>0?Math.round(k):0, ready:k>0 };
+  if(sp.mode==="timeKcal") return { kcal:k>0?Math.round(k):0, ready:k>0&&t>0 };
+  if(sp.id==="boxe"){
+    const rate = BOXE_LEVELS.find(b=>b.lvl===p.level)?.rate;
+    if(!(t>0)||!rate) return { kcal:0, ready:false };
+    return { kcal:Math.round(rate*t), rate, ready:true, computed:true };
+  }
+  if(sp.id==="roller"){
+    if(!(t>0)||!(d>0)) return { kcal:0, ready:false };
+    const met = speedMET("roller", d/(t/60));
+    return { kcal:Math.round(met*aw*t/60), met, ready:true, computed:true };
+  }
+  // Saisie "comme Fitbit"
+  if(!(t>0)) return { kcal:0, ready:false };
+  if(k>0)    return { kcal:Math.round(k), ready:true };
+  const met = (d>0 && sp.dist) ? speedMET(sp.id, d/(t/60)) : (DEFAULT_MET[sp.id]||5);
+  return { kcal:Math.round(met*aw*t/60), met, ready:true, estimated:true };
+}
+
+// ── Cycle ──────────────────────────────────────────────────────────────
+function cycleLength(cycle){
+  const s=[...cycle.starts].sort();
+  const gaps=[];
+  for(let i=1;i<s.length;i++){ const g=diffDays(s[i],s[i-1]); if(g>=21&&g<=45) gaps.push(g); }
+  if(gaps.length) return { len:Math.round(avg(gaps.slice(-6))), fromHistory:true };
+  return { len:Math.min(45,Math.max(21,num(cycle.cycleLen)||28)), fromHistory:false };
+}
+function phaseRanges(len, periodLen){
+  const pl=Math.min(10,Math.max(2,num(periodLen)||5));
+  const ov=len-14;
+  const oStart=Math.max(pl+1,ov-1), oEnd=Math.max(oStart,ov+1);
+  return {
+    menstruelle:[1,pl],
+    folliculaire:[pl+1,Math.max(pl,oStart-1)],
+    ovulatoire:[oStart,oEnd],
+    luteale:[oEnd+1,len],
+  };
+}
+function phaseFor(date, cycle){
+  const starts=[...cycle.starts].sort().filter(s=>s<=date);
+  if(!starts.length) return null;
+  const last=starts[starts.length-1];
+  const { len } = cycleLength(cycle);
+  const diff=diffDays(date,last);
+  const day=(diff%len)+1;
+  const r=phaseRanges(len,cycle.periodLen);
+  const phase=PHASE_ORDER.find(p=>day>=r[p][0]&&day<=r[p][1])||"luteale";
+  return { day, phase, predicted:diff>=len, len, last, next:addDays(last,len*(Math.floor(diff/len)+1)) };
+}
+
+// ── Statistiques ───────────────────────────────────────────────────────
+function goalFor(goals,k){ const g=goals[k]||{}; return { weight:num(g.weight), fatPct:num(g.fatPct), deficit:num(g.deficit) }; }
+
+function dayStats(date, ctx){
+  const d = ctx.days[date]||{};
+  const comp = compAt(date, ctx.weighins, ctx.profile);
+  const sessions = d.sessions||[];
+  const sport = sessions.reduce((a,s)=>a+s.kcal,0);
+  const steps = parseInt(d.steps)||0;
+  const stepsKcal = Math.round(3.5*comp.aw*(steps/100)/60);
+  const burned = comp.bmr+sport+stepsKcal;
+  const consumed = parseInt(d.calories)||0;
+  const balance = consumed>0 ? consumed-burned : null;
+  const sh=num(d.sleepH), sm=num(d.sleepM);
+  const sleepMin = (sh!=null||sm!=null) ? (sh||0)*60+(sm||0) : null;
+  const g = goalFor(ctx.goals, monthKey(date));
+  const target = g.deficit ?? DEFAULT_DEFICIT;
+  return { date, sessions, sport, steps, stepsKcal, burned, consumed, balance, sleepMin, target, active:sessions.length>0, comp };
+}
+
+function weekStats(monday, ctx){
+  const { today } = ctx;
+  const dates = [...Array(7)].map((_,i)=>addDays(monday,i));
+  const stats = dates.map(d=>dayStats(d,ctx));
+  const isPast = dates[6] < today;
+  const done = isPast ? stats : stats.filter(s=>s.date<today);   // journées terminées
+  const todayS = stats.find(s=>s.date===today);
+
+  const act = { value:stats.filter(s=>s.active).length };
+
+  const stepDays = done.filter(s=>s.steps>0);
+  const stepsAvg = avg(stepDays.map(s=>s.steps));
+  const steps = { value:stepsAvg, ratio:stepsAvg==null?null:stepsAvg/TARGET_STEPS, basis:stepDays.length, okDays:stats.filter(s=>s.steps>=TARGET_STEPS).length };
+
+  const sleepDays = stats.filter(s=>s.date<=today && s.sleepMin!=null);
+  const sleepAvg = avg(sleepDays.map(s=>s.sleepMin));
+  const sleep = { value:sleepAvg, ratio:sleepAvg==null?null:sleepAvg/TARGET_SLEEP_MIN, basis:sleepDays.length, okDays:sleepDays.filter(s=>s.sleepMin>=TARGET_SLEEP_MIN).length };
+
+  const calDays = done.filter(s=>s.balance!=null);
+  const balAvg = avg(calDays.map(s=>s.balance));
+  const tgtAvg = avg(calDays.map(s=>s.target)) ?? stats[0].target;
+  const deficit = { value:balAvg, target:tgtAvg, ratio:balAvg==null?null:Math.max(0,-balAvg)/tgtAvg, basis:calDays.length, okDays:stats.filter(s=>s.balance!=null&&s.balance<=-s.target).length };
+
+  return { monday, dates, stats, isPast, act, steps, sleep, deficit,
+    totalSport: stats.reduce((a,s)=>a+s.sport,0), sessions: stats.reduce((a,s)=>a+s.sessions.length,0) };
+}
+
+function monthStats(k, ctx){
+  const { weighins, today } = ctx;
+  const g = goalFor(ctx.goals,k);
+  const ms=monthStart(k), me=monthEnd(k);
+  const isFuture = ms>today;
+  const refDate = today<me ? today : me;
+
+  function track(field, goalVal){
+    const pts = weighins.filter(w=>w[field]!=null);
+    const before = pts.filter(w=>w.date<ms), inM = pts.filter(w=>w.date>=ms&&w.date<=me);
+    let start = before.length ? before[before.length-1][field] : inM.length ? inM[0][field] : null;
+    if(start==null && field==="weight") start = num(ctx.profile.weight);
+    const win = pts.filter(w=>w.date<=refDate && diffDays(refDate,w.date)<=35);
+    const latest = win.length ? win[win.length-1] : null;
+    let proj=null;
+    if(!isFuture && win.length>=2 && diffDays(win[win.length-1].date,win[0].date)>=6){
+      const { slope, intercept } = linreg(win.map(w=>[diffDays(w.date,ms), w[field]]));
+      proj = intercept + slope*diffDays(me,ms);
+    }
+    let ratio=null, expected=null;
+    if(goalVal!=null && start!=null){
+      const need = start-goalVal;
+      const frac = Math.min(1,Math.max(0,(diffDays(refDate,ms)+1)/daysInMonth(k)));
+      expected = start - need*frac;
+      if(proj!=null) ratio = need>0.05 ? (start-proj)/need : (proj<=goalVal+0.5?1:0);
+    }
+    return { start, goal:goalVal, proj, ratio, expected, latest };
+  }
+
+  const done=[];
+  if(!isFuture){ for(let d=ms; d<=me && d<today; d=addDays(d,1)) done.push(dayStats(d,ctx)); }
+  const calDays = done.filter(s=>s.balance!=null);
+  const balAvg = avg(calDays.map(s=>s.balance));
+  const tgt = g.deficit ?? DEFAULT_DEFICIT;
+
+  // Compteurs mensuels (jours actifs, boxe, roller) avec estimation fin de mois en valeur absolue
+  const dim = daysInMonth(k), isPastM = me<today;
+  function counter(countFn, target){
+    let total=0;
+    if(!isFuture) for(let d=ms; d<=me && d<=today; d=addDays(d,1)) total += countFn(ctx.days[d]?.sessions||[]);
+    const todayCount = (!isFuture&&!isPastM) ? countFn(ctx.days[today]?.sessions||[]) : 0;
+    const elapsed = isFuture ? 0 : isPastM ? dim : done.length + (todayCount>0?1:0);
+    let est = elapsed>0 ? Math.round(total*dim/elapsed) : null;
+    if(est!=null) est = Math.max(total, est);
+    const ratio = total>=target ? 1 : est==null ? null : est/target;
+    return { value:total, est, target, ratio, elapsed, remaining:isFuture?dim:dim-elapsed, need:Math.max(0,target-total) };
+  }
+  const act    = counter(s=>s.length>0?1:0, TARGET_ACTIVE_MONTH);
+  if(act.est!=null) act.est = Math.min(dim, act.est);
+  const boxe   = counter(s=>s.filter(x=>x.sport==="boxe").length,   TARGET_BOXE_MONTH);
+  const roller = counter(s=>s.filter(x=>x.sport==="roller").length, TARGET_ROLLER_MONTH);
+
+  return { k, g, isFuture, act, boxe, roller,
+    weight: track("weight", g.weight),
+    fat: track("fatPct", g.fatPct),
+    deficit: { value:balAvg, target:tgt, ratio:balAvg==null?null:Math.max(0,-balAvg)/tgt, basis:calDays.length } };
+}
+
+function buildAlerts(ws, mst){
+  const a=[]; const p=r=>Math.round(r*100)+" %";
+  const monthAlert = (c,icon,title,unit,perDay) => {
+    if(c.ratio==null || c.elapsed<MONTH_ALERT_MIN_DAYS || c.ratio>=ALERT_RATIO) return;
+    const impossible = perDay && c.need>c.remaining;
+    a.push({ icon, title, ratio:c.ratio,
+      text:`Estimation fin de mois : ${c.est} ${unit} sur ${c.target} (déjà ${c.value}).`,
+      hint: impossible ? `L'objectif de ${c.target} ${unit} n'est plus atteignable ce mois-ci.` : `Il en manque ${c.need} et il reste ${c.remaining} jour(s) dans le mois.` });
+  };
+  monthAlert(mst.act,"🏅","Activité physique du mois","jours actifs",true);
+  monthAlert(mst.boxe,"🥊","Boxe du mois","séances",false);
+  monthAlert(mst.roller,"🛼","Roller du mois","séances",false);
+  if(ws.sleep.ratio!=null && ws.sleep.basis>=2 && ws.sleep.ratio<ALERT_RATIO)
+    a.push({ icon:"😴", title:"Sommeil", ratio:ws.sleep.ratio, text:`Moyenne de ${fmtSleep(ws.sleep.value)} par nuit, objectif 7h30 (${p(ws.sleep.ratio)}).` });
+  if(ws.steps.ratio!=null && ws.steps.basis>=2 && ws.steps.ratio<ALERT_RATIO)
+    a.push({ icon:"👟", title:"Pas", ratio:ws.steps.ratio, text:`Moyenne de ${fr(ws.steps.value)} pas par jour, objectif ${fr(TARGET_STEPS)} (${p(ws.steps.ratio)}).` });
+  if(ws.deficit.ratio!=null && ws.deficit.basis>=2 && ws.deficit.ratio<ALERT_RATIO)
+    a.push({ icon:"🔥", title:"Déficit calorique (semaine)", ratio:ws.deficit.ratio, text: ws.deficit.value>0
+      ? `Surplus moyen de ${fr(ws.deficit.value)} kcal par jour au lieu d'un déficit de ${fr(ws.deficit.target)} kcal (0 %).`
+      : `Déficit moyen de ${fr(-ws.deficit.value)} kcal, objectif ${fr(ws.deficit.target)} kcal (${p(ws.deficit.ratio)}).` });
+  if(mst.weight.ratio!=null && mst.weight.ratio<ALERT_RATIO)
+    a.push({ icon:"⚖️", title:"Objectif poids du mois", ratio:mst.weight.ratio, text:`Estimation fin de mois : ${fr(mst.weight.proj,1)} kg pour un objectif de ${fr(mst.weight.goal,1)} kg (${p(Math.max(0,mst.weight.ratio))}).` });
+  if(mst.fat.ratio!=null && mst.fat.ratio<ALERT_RATIO)
+    a.push({ icon:"💧", title:"Objectif % de graisse du mois", ratio:mst.fat.ratio, text:`Estimation fin de mois : ${fr(mst.fat.proj,1)} % pour un objectif de ${fr(mst.fat.goal,1)} % (${p(Math.max(0,mst.fat.ratio))}).` });
+  return a;
+}
+
+// ── Composants ─────────────────────────────────────────────────────────
+function Card({children,style}){ return <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:16,marginBottom:12,...style}}>{children}</div>; }
+function Title({children,sub,right}){
+  return <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12,gap:8}}>
+    <div><div style={{fontWeight:700,fontSize:15}}>{children}</div>{sub&&<div style={{fontSize:11,color:C.dim,marginTop:3}}>{sub}</div>}</div>{right}
+  </div>;
+}
+function Bar({ratio,color,noMark}){
+  const w = ratio==null ? 0 : Math.max(0,Math.min(1,ratio))*100;
+  return <div style={{background:"#0f1918",borderRadius:99,height:6,marginTop:8,position:"relative",overflow:"hidden"}}>
+    <div style={{width:`${w}%`,height:6,background:color||stColor(ratio),borderRadius:99,transition:"width .4s"}}/>
+    {!noMark&&<div style={{position:"absolute",left:"80%",top:0,width:1.5,height:6,background:"#ffffff55"}}/>}
+  </div>;
+}
+function CountRow({icon,label,c,unit}){
+  const alert = c.ratio!=null && c.ratio<ALERT_RATIO && c.elapsed>=MONTH_ALERT_MIN_DAYS;
+  return <div style={{background:C.inner,borderRadius:12,padding:12,marginBottom:8,border:`1px solid ${alert?"#7f1d1d":C.border}`}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+      <span style={{fontWeight:700,fontSize:13}}>{icon} {label}</span>
+      <span style={{fontSize:18,fontWeight:800}}>{c.value}<span style={{fontSize:12,color:C.dim,fontWeight:500}}> / {c.target} {unit}</span></span>
+    </div>
+    <Bar ratio={c.value/c.target} color={c.value>=c.target?C.ok:C.tq} noMark/>
+    <div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginTop:6}}>
+      <span style={{color:C.dim}}>Estimation fin de mois</span>
+      <span style={{fontWeight:800,color:stColor(c.ratio)}}>{c.est==null?"—":`${c.est} ${unit}`}{c.ratio!=null?` · ${stLabel(c.ratio)}`:""}</span>
+    </div>
+  </div>;
+}
+function GoalTile({icon,label,value,target,ratio,sub,badge}){
+  const alert = ratio!=null && ratio<ALERT_RATIO;
+  return <div style={{background:C.inner,borderRadius:12,padding:12,border:`1px solid ${alert?"#7f1d1d":C.border}`}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+      <span style={{fontSize:20}}>{icon}</span>
+      <span style={{fontSize:11,fontWeight:800,color:stColor(ratio)}}>{badge ?? (ratio==null?"—":Math.round(Math.max(0,ratio)*100)+" %")}</span>
+    </div>
+    <div style={{fontSize:11,color:C.muted,marginTop:6}}>{label}</div>
+    <div style={{fontSize:18,fontWeight:800,marginTop:2}}>{value}<span style={{fontSize:11,color:C.dim,fontWeight:500}}> / {target}</span></div>
+    <Bar ratio={ratio}/>
+    {sub&&<div style={{fontSize:10,color:C.dim,marginTop:6,lineHeight:1.35}}>{sub}</div>}
+  </div>;
+}
+function AlertList({alerts}){
+  if(!alerts.length) return null;
+  return <div style={{background:"#1a0b0b",border:"1px solid #7f1d1d",borderRadius:16,padding:14,marginBottom:12}}>
+    <div style={{fontWeight:800,fontSize:14,color:C.bad,marginBottom:8}}>⚠️ {alerts.length} objectif{alerts.length>1?"s":""} sous 80 %</div>
+    {alerts.map((a,i)=>(
+      <div key={i} style={{display:"flex",gap:10,padding:"8px 0",borderTop:i?"1px solid #3b1414":"none"}}>
+        <span style={{fontSize:18}}>{a.icon}</span>
+        <div style={{fontSize:12,lineHeight:1.4}}>
+          <div style={{fontWeight:700,color:"#fecaca"}}>{a.title}</div>
+          <div style={{color:"#fca5a5"}}>{a.text}</div>
+          {a.hint&&<div style={{color:"#f8717199",marginTop:2}}>{a.hint}</div>}
+        </div>
+      </div>
+    ))}
+  </div>;
+}
+function CycleRing({len,periodLen,day,phase}){
+  const R=78, cx=100, cy=100, sw=16, circ=2*Math.PI*R;
+  const r=phaseRanges(len,periodLen);
+  const ang=((day-0.5)/len)*2*Math.PI-Math.PI/2;
+  return <svg viewBox="0 0 200 200" width="190" height="190">
+    <circle cx={cx} cy={cy} r={R} fill="none" stroke="#111b1a" strokeWidth={sw}/>
+    {PHASE_ORDER.map(p=>{
+      const [a,b]=r[p]; if(b<a) return null;
+      const segLen=(b-a+1)/len*circ;
+      return <circle key={p} cx={cx} cy={cy} r={R} fill="none" stroke={PHASES[p].color} strokeWidth={sw}
+        strokeDasharray={`${Math.max(0,segLen-2)} ${circ}`} strokeDashoffset={-((a-1)/len)*circ}
+        transform={`rotate(-90 ${cx} ${cy})`} opacity={p===phase?1:0.35}/>;
+    })}
+    <circle cx={cx+R*Math.cos(ang)} cy={cy+R*Math.sin(ang)} r="11" fill={C.bg} stroke="#fff" strokeWidth="3"/>
+    <text x={cx} y={cy-6} textAnchor="middle" fill={C.text} fontSize="30" fontWeight="900">J{day}</text>
+    <text x={cx} y={cy+16} textAnchor="middle" fill={PHASES[phase].color} fontSize="13" fontWeight="700">{PHASES[phase].label}</text>
+    <text x={cx} y={cy+33} textAnchor="middle" fill={C.dim} fontSize="10">cycle de {len} j</text>
+  </svg>;
+}
+function WeightChart({weighins,goalW}){
+  const pts = weighins.filter(w=>w.weight!=null||w.fatPct!=null).slice(-10);
+  const ws = pts.map(p=>p.weight), fs = pts.map(p=>p.fatPct);
+  if([...ws,...fs].filter(v=>v!=null).length<2) return <div style={{textAlign:"center",padding:"24px 0",color:C.dim,fontSize:12}}>Ajoute au moins deux pesées pour voir la courbe</div>;
+  const W=300,H=110,padX=30,padY=16,iW=W-padX*2,iH=H-padY*2,n=pts.length;
+  const wDef=[...ws.filter(v=>v!=null),...(goalW!=null?[goalW]:[])], fDef=fs.filter(v=>v!=null);
+  const wMin=Math.min(...wDef)-0.8, wMax=Math.max(...wDef)+0.8;
+  const fMin=fDef.length?Math.min(...fDef)-1:0, fMax=fDef.length?Math.max(...fDef)+1:1;
+  const x=i=>padX+i*(iW/(n-1||1)), yW=v=>padY+iH-((v-wMin)/(wMax-wMin||1))*iH, yF=v=>padY+iH-((v-fMin)/(fMax-fMin||1))*iH;
+  const path=(vals,y)=>{ let s="",on=false; vals.forEach((v,i)=>{ if(v!=null){ s+=(on?"L":"M")+x(i)+","+y(v); on=true; } else on=false; }); return s; };
+  return <div>
+    <div style={{display:"flex",gap:14,marginBottom:10,fontSize:11,flexWrap:"wrap"}}>
+      <span style={{color:C.tqL}}>━ Poids (kg)</span><span style={{color:"#f59e0b"}}>┅ % graisse</span>
+      {goalW!=null&&<span style={{color:C.tqD}}>┄ Objectif du mois</span>}
+    </div>
+    <svg width="100%" viewBox={`0 0 ${W} ${H+16}`} style={{overflow:"visible"}}>
+      {[0,0.5,1].map(t=><line key={t} x1={padX} y1={padY+iH*t} x2={W-padX} y2={padY+iH*t} stroke="#14201f"/>)}
+      {goalW!=null&&<line x1={padX} x2={W-padX} y1={yW(goalW)} y2={yW(goalW)} stroke={C.tqD} strokeDasharray="3,4" strokeWidth="1.5"/>}
+      <path d={path(ws,yW)} fill="none" stroke={C.tqL} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+      {ws.map((v,i)=>v!=null&&<g key={i}><circle cx={x(i)} cy={yW(v)} r="3.5" fill={C.tqL}/><text x={x(i)} y={yW(v)-8} textAnchor="middle" fill={C.tqXL} fontSize="8.5" fontWeight="700">{fr(v,1)}</text></g>)}
+      <path d={path(fs,yF)} fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="5,3" strokeLinecap="round"/>
+      {fs.map((v,i)=>v!=null&&<g key={i}><circle cx={x(i)} cy={yF(v)} r="3.5" fill="#f59e0b"/><text x={x(i)} y={yF(v)+15} textAnchor="middle" fill="#f59e0b" fontSize="8">{fr(v,1)}%</text></g>)}
+      {pts.map((p,i)=><text key={i} x={x(i)} y={H+14} textAnchor="middle" fill={C.dim} fontSize="7.5">{fmt(p.date)}</text>)}
+    </svg>
+  </div>;
+}
+
+// ── Application ────────────────────────────────────────────────────────
+function App(){
+  const today = todayISO();
+  const [tab,setTab]               = useState("jour");
+  const [profile,setProfile]       = useState(()=>load("ms_profile",DEFAULT_PROFILE));
+  const [days,setDays]             = useState(()=>load("ms_days",{}));
+  const [weighins,setWeighins]     = useState(()=>load("ms_weighins",[]));
+  const [goals,setGoals]           = useState(()=>load("ms_goals",{}));
+  const [cycle,setCycle]           = useState(()=>load("ms_cycle",{starts:[],cycleLen:"28",periodLen:"5"}));
+  const [activeDate,setActiveDate] = useState(today);
+  const [sport,setSport]           = useState(null);
+  const [params,setParams]         = useState({});
+  const [showProfile,setShowProfile] = useState(false);
+  const [goalMonth,setGoalMonth]   = useState(monthKey(today));
+  const [wForm,setWForm]           = useState({date:today,weight:"",muscle:"",fatPct:"",bmr:""});
+  const [periodDate,setPeriodDate] = useState(today);
+
+  useEffect(()=>save("ms_profile",profile),[profile]);
+  useEffect(()=>save("ms_days",days),[days]);
+  useEffect(()=>save("ms_weighins",weighins),[weighins]);
+  useEffect(()=>save("ms_goals",goals),[goals]);
+  useEffect(()=>save("ms_cycle",cycle),[cycle]);
+
+  const ctx = { days, weighins, goals, profile, today };
+  const monday = mondayOf(activeDate);
+  const thisMonday = mondayOf(today);
+  const cur = dayStats(activeDate, ctx);
+  const ws = weekStats(monday, ctx);
+  const curWs = monday===thisMonday ? ws : weekStats(thisMonday, ctx);
+  const curMs = monthStats(monthKey(today), ctx);
+  const alerts = buildAlerts(curWs, curMs);
+  // Phase effective : celle choisie dans l'onglet Cycle, sinon celle calculée
+  const phaseOf = date => {
+    const man = days[date]?.phase, calc = phaseFor(date, cycle);
+    return man ? { ...(calc||{}), phase:man, manual:true, predicted:false } : calc;
+  };
+  const phaseToday = phaseOf(today);
+  const phaseActive = phaseOf(activeDate);
+  const weekRefDate = addDays(monday,6) < today ? addDays(monday,6) : today;
+  const weekMs = monthKey(weekRefDate)===monthKey(today) ? curMs : monthStats(monthKey(weekRefDate), ctx);
+  const compNow = compAt(today, weighins, profile);
+
+  const sp = SPORTS.find(s=>s.id===sport);
+  const calc = sp ? computeSession(sp, params, cur.comp.aw) : null;
+
+  // ── Actions ──
+  const updDay = (date,patch) => setDays(ds=>({...ds,[date]:{...(ds[date]||{}),...patch}}));
+  const setDayField = (f,v) => updDay(activeDate,{[f]:v});
+  const setP = (k,v) => setParams(p=>({...p,[k]:v}));
+  const pickDate = d => { setActiveDate(d); setSport(null); setParams({}); };
+  const goWeek = n => { const m=addDays(monday,7*n); if(m>thisMonday) return; pickDate(m===thisMonday?today:m); };
+
+  function addSession(){
+    if(!calc||!calc.ready) return;
+    let label = sp.label;
+    if(sp.named && params.name?.trim()) label = sp.id==="autre" ? params.name.trim() : `${sp.label} · ${params.name.trim()}`;
+    if(sp.id==="boxe") label += ` · ${BOXE_LEVELS.find(b=>b.lvl===params.level)?.label}`;
+    const s = { id:Date.now(), sport:sp.id, icon:sp.icon, label, kcal:calc.kcal, estimated:!!calc.estimated,
+      time:num(params.time), distance:num(params.distance), hr:num(params.hr), level:params.level||null };
+    setDays(ds=>{ const d=ds[activeDate]||{}; return {...ds,[activeDate]:{...d,sessions:[...(d.sessions||[]),s]}}; });
+    setSport(null); setParams({});
+  }
+  const removeSession = id => setDays(ds=>{ const d=ds[activeDate]||{}; return {...ds,[activeDate]:{...d,sessions:(d.sessions||[]).filter(s=>s.id!==id)}}; });
+
+  function saveWeighin(){
+    const e={ date:wForm.date||today, weight:num(wForm.weight), muscle:num(wForm.muscle), fatPct:num(wForm.fatPct), bmr:num(wForm.bmr) };
+    if(e.weight==null&&e.fatPct==null&&e.muscle==null&&e.bmr==null) return;
+    setWeighins(list=>[...list.filter(w=>w.date!==e.date),e].sort((a,b)=>a.date<b.date?-1:1));
+    setWForm({date:today,weight:"",muscle:"",fatPct:"",bmr:""});
+  }
+  const setGoal = (f,v) => setGoals(gs=>({...gs,[goalMonth]:{...(gs[goalMonth]||{}),[f]:v}}));
+  function addPeriod(d){ if(!d) return; setCycle(c=>({...c,starts:[...new Set([...c.starts,d])].sort()})); }
+  const removePeriod = d => setCycle(c=>({...c,starts:c.starts.filter(x=>x!==d)}));
+
+  function exportData(){
+    const blob=new Blob([JSON.stringify({app:"MaiSport",v:1,profile,days,weighins,goals,cycle},null,1)],{type:"application/json"});
+    const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`maisport-${today}.json`; a.click();
+  }
+  function importData(file){
+    if(!file) return;
+    const r=new FileReader();
+    r.onload=()=>{ try{
+      const d=JSON.parse(r.result);
+      if(d.app!=="MaiSport") throw 0;
+      if(!window.confirm("Remplacer toutes les données actuelles par cette sauvegarde ?")) return;
+      setProfile(d.profile||DEFAULT_PROFILE); setDays(d.days||{}); setWeighins(d.weighins||[]); setGoals(d.goals||{}); setCycle(d.cycle||{starts:[],cycleLen:"28",periodLen:"5"});
+    }catch{ window.alert("Fichier non reconnu."); } };
+    r.readAsText(file);
+  }
+
+  // ── Styles ──
+  const lbl  = {fontSize:12,color:C.muted,marginBottom:6,display:"block"};
+  const inp  = {width:"100%",background:C.inner,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 11px",color:C.text,fontSize:15,outline:"none"};
+  const chip = a => ({padding:"9px 12px",borderRadius:10,border:"1.5px solid",borderColor:a?C.tq:C.border,background:a?C.tqDeep:C.inner,color:a?C.text:C.muted,fontSize:13,fontWeight:a?700:400});
+  const btnPrimary = on => ({width:"100%",padding:14,borderRadius:12,border:"none",background:on?`linear-gradient(135deg,${C.tq},${C.tqD})`:C.card,color:on?"#021715":C.dim,fontWeight:800,fontSize:15});
+  const btnGhost = {background:C.inner,border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 10px",color:C.tqL,fontSize:12,fontWeight:600};
+  const row = {display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${C.inner}`};
+  const NumInput = (value,onChange,placeholder,step="any") => <input type="number" inputMode="decimal" step={step} min="0" placeholder={placeholder} value={value??""} onChange={e=>onChange(e.target.value)} style={inp}/>;
+
+  // ── Barre des jours ──
+  function renderDayBar(){
+    return <div style={{marginBottom:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+        <button onClick={()=>goWeek(-1)} style={{...btnGhost,padding:"4px 12px",fontSize:16}}>‹</button>
+        <div style={{fontSize:12,color:C.muted}}>Semaine du {fmt(monday)} au {fmt(addDays(monday,6))}</div>
+        <button onClick={()=>goWeek(1)} disabled={monday>=thisMonday} style={{...btnGhost,padding:"4px 12px",fontSize:16,opacity:monday>=thisMonday?0.25:1}}>›</button>
+      </div>
+      <div style={{display:"flex",gap:5}}>
+        {DAYS.map((d,i)=>{
+          const date=addDays(monday,i), sel=date===activeDate, fut=date>today, ph=phaseOf(date);
+          return <button key={i} disabled={fut} onClick={()=>pickDate(date)} style={{flex:1,padding:"7px 2px 5px",borderRadius:10,border:"none",
+            background:sel?C.tq:C.card,color:sel?"#021715":C.muted,fontWeight:sel?800:500,fontSize:12,opacity:fut?0.35:1,
+            boxShadow:date===today&&!sel?`inset 0 0 0 1.5px ${C.tqL}`:"none"}}>
+            {d}<div style={{fontSize:9,marginTop:1,opacity:0.8}}>{date.slice(8)}</div>
+            <div style={{height:6,display:"flex",justifyContent:"center",marginTop:3}}>
+              {ph&&<div style={{width:6,height:6,borderRadius:99,background:PHASES[ph.phase].color,opacity:ph.predicted?0.45:1}}/>}
+            </div>
+          </button>;
+        })}
+      </div>
+    </div>;
+  }
+
+  // ── Formulaire sport ──
+  function renderInputs(){
+    if(!sp) return null;
+    const isFit = sp.mode==="fitbit";
+    const t=num(params.time), d=num(params.distance);
+    return <div style={{display:"flex",flexDirection:"column",gap:12}}>
+      {isFit&&<div style={{fontSize:11,color:C.tqL,background:C.tqDeep,borderRadius:8,padding:"7px 10px"}}>⌚ Recopie le résumé Fitbit de la séance. Sans calories Fitbit, MaiSport les estime.</div>}
+      {sp.named&&<div><label style={lbl}>🏷️ Nom de l'activité</label><input type="text" placeholder={sp.ph} value={params.name||""} onChange={e=>setP("name",e.target.value)} style={inp}/></div>}
+      {sp.mode!=="kcal"&&<div><label style={lbl}>⏱️ Durée (minutes)</label>{NumInput(params.time,v=>setP("time",v),"ex : 45","1")}</div>}
+      {(sp.dist||sp.id==="roller")&&<div><label style={lbl}>📏 Distance (km){isFit?" — optionnel":""}</label>{NumInput(params.distance,v=>setP("distance",v),"ex : 5,2","0.01")}</div>}
+      {sp.id==="boxe"&&<div><label style={lbl}>🎯 Intensité</label>
+        <div style={{display:"flex",flexDirection:"column",gap:7}}>
+          {BOXE_LEVELS.map(b=>(
+            <button key={b.lvl} onClick={()=>setP("level",b.lvl)} style={{...chip(params.level===b.lvl),textAlign:"left",display:"flex",alignItems:"center",gap:10}}>
+              <span style={{display:"flex",gap:2}}>{[1,2,3].map(n=><span key={n} style={{width:7,height:14,borderRadius:2,background:n<=b.lvl?C.tqL:"#1f2e2c"}}/>)}</span>
+              <span style={{flex:1}}><span style={{fontWeight:700}}>{b.label}</span><div style={{fontSize:11,color:C.dim,marginTop:1}}>{b.desc}</div></span><span style={{fontSize:11,color:C.tqL,fontWeight:700}}>{fr(b.rate,1)} kcal/min</span>
+            </button>
+          ))}
+        </div></div>}
+      {(sp.mode==="kcal"||sp.mode==="timeKcal")&&<div><label style={lbl}>🔥 Calories brûlées (kcal)</label>{NumInput(params.kcal,v=>setP("kcal",v),"ex : 280","1")}</div>}
+      {isFit&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <div><label style={lbl}>🔥 Calories Fitbit</label>{NumInput(params.kcal,v=>setP("kcal",v),"optionnel","1")}</div>
+        <div><label style={lbl}>❤️ FC moyenne</label>{NumInput(params.hr,v=>setP("hr",v),"bpm (opt.)","1")}</div>
+      </div>}
+      {sp.id==="course"&&t>0&&d>0&&<div style={{fontSize:12,color:C.tqL}}>Allure {fmtPace(t,d)} · {fr(d/(t/60),1)} km/h</div>}
+      {(sp.id==="velo"||sp.id==="ski"||sp.id==="roller")&&t>0&&d>0&&<div style={{fontSize:12,color:C.tqL}}>Vitesse moyenne {fr(d/(t/60),1)} km/h</div>}
+    </div>;
+  }
+
+  // ═════════════════════════════════════════════════════════════════════
+  return <div style={{minHeight:"100vh",background:C.bg,color:C.text,paddingBottom:40}}>
+
+    {/* En-tête */}
+    <div style={{background:`radial-gradient(120% 140% at 0% 0%, ${C.tqDeep} 0%, ${C.bg} 70%)`,padding:"18px 16px 14px",paddingTop:"max(18px, env(safe-area-inset-top))",borderBottom:`1px solid ${C.border}`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div>
+          <div style={{fontSize:24,fontWeight:900,letterSpacing:-0.5}}><span style={{color:C.tqL}}>Mai</span>Sport</div>
+          <div style={{fontSize:12,color:C.muted,marginTop:3,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            <span>{new Date().toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})}</span>
+            {phaseToday&&<span style={{background:PHASES[phaseToday.phase].color+"22",color:PHASES[phaseToday.phase].color,borderRadius:99,padding:"2px 8px",fontSize:11,fontWeight:700}}>{PHASES[phaseToday.phase].icon} {phaseToday.day?`J${phaseToday.day} · `:""}{PHASES[phaseToday.phase].label}</span>}
+          </div>
+        </div>
+        <button onClick={()=>setShowProfile(true)} style={{background:C.tqDeep,border:`1px solid ${C.tqD}`,borderRadius:10,padding:"8px 12px",color:C.tqXL,fontSize:12,fontWeight:600}}>👤 Profil</button>
+      </div>
+    </div>
+
+    {/* Onglets */}
+    <div style={{display:"flex",background:C.bg,borderBottom:`1px solid ${C.border}`,position:"sticky",top:0,zIndex:5}}>
+      {[["jour","📋","Journée"],["sport","🏅","Sport"],["semaine","📊","Semaine"],["objectifs","🎯","Objectifs"],["cycle","🌙","Cycle"]].map(([id,ic,l])=>(
+        <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"9px 2px 8px",border:"none",background:"none",color:tab===id?C.tqL:C.dim,fontWeight:tab===id?700:500,borderBottom:`2px solid ${tab===id?C.tqL:"transparent"}`,fontSize:11,position:"relative"}}>
+          <div style={{fontSize:17,marginBottom:2,filter:tab===id?"none":"grayscale(0.6)"}}>{ic}</div>{l}
+          {(id==="semaine"||id==="objectifs")&&alerts.length>0&&<span style={{position:"absolute",top:5,right:"22%",width:8,height:8,borderRadius:99,background:C.bad}}/>}
+        </button>
+      ))}
+    </div>
+
+    <div style={{padding:16,maxWidth:560,margin:"0 auto"}}>
+
+      {/* ── JOURNÉE ── */}
+      {tab==="jour"&&<>
+        {renderDayBar()}
+        <AlertList alerts={alerts}/>
+        <Card style={{padding:"14px 10px"}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",textAlign:"center"}}>
+            {[
+              ["🏅","Activité",cur.active],
+              ["😴","7h30 sommeil",cur.sleepMin!=null&&cur.sleepMin>=TARGET_SLEEP_MIN],
+              ["👟","6 000 pas",cur.steps>=TARGET_STEPS],
+              ["🔥",`Déficit ${fr(cur.target)}`,cur.balance!=null&&cur.balance<=-cur.target],
+            ].map(([ic,l,ok])=>(
+              <div key={l}>
+                <div style={{fontSize:30,filter:ok?"none":"grayscale(1) opacity(0.25)"}}>{ic}</div>
+                <div style={{fontSize:10,marginTop:4,color:ok?C.tqL:C.dim,fontWeight:700}}>{l}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        <Card>
+          <Title sub={activeDate===today?"Aujourd'hui":fmtFull(activeDate)}>✏️ Saisie du jour</Title>
+          <div style={{marginBottom:14}}>
+            <label style={lbl}>😴 Sommeil de la nuit dernière</label>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div style={{position:"relative"}}>{NumInput(days[activeDate]?.sleepH,v=>setDayField("sleepH",v),"7","1")}<span style={{position:"absolute",right:12,top:11,color:C.dim,fontSize:13}}>h</span></div>
+              <div style={{position:"relative"}}>{NumInput(days[activeDate]?.sleepM,v=>setDayField("sleepM",v),"30","1")}<span style={{position:"absolute",right:12,top:11,color:C.dim,fontSize:13}}>min</span></div>
+            </div>
+            {cur.sleepMin!=null&&<div style={{marginTop:6,fontSize:12,color:cur.sleepMin>=TARGET_SLEEP_MIN?C.ok:C.warn}}>{fmtSleep(cur.sleepMin)} {cur.sleepMin>=TARGET_SLEEP_MIN?"✓ objectif atteint":`· il manque ${fmtSleep(TARGET_SLEEP_MIN-cur.sleepMin)}`}</div>}
+          </div>
+          <div style={{marginBottom:14}}>
+            <label style={lbl}>🍽️ Calories consommées (kcal)</label>
+            {NumInput(days[activeDate]?.calories,v=>setDayField("calories",v),"ex : 1600","1")}
+          </div>
+          <div>
+            <label style={lbl}>👟 Nombre de pas</label>
+            {NumInput(days[activeDate]?.steps,v=>setDayField("steps",v),"ex : 6000","100")}
+            {cur.steps>0&&<div style={{marginTop:6,display:"flex",gap:12,fontSize:12,color:C.tqL}}><span>≈ {fr((cur.steps*(num(profile.height)||161)*0.413)/100000,2)} km</span><span>≈ {cur.stepsKcal} kcal</span></div>}
+          </div>
+        </Card>
+
+        <Card>
+          <Title>⚖️ Bilan calorique</Title>
+          {[["🔥 Métabolisme de base",cur.comp.bmr,C.muted],["🏅 Sport & activités",cur.sport,C.tqL],["👟 Marche (pas)",cur.stepsKcal,C.tqL]].map(([l,v,c])=>(
+            <div key={l} style={row}><span style={{fontSize:13,color:C.muted}}>{l}</span><span style={{fontWeight:700,color:c}}>{fr(v)} kcal</span></div>
+          ))}
+          <div style={row}><span style={{fontSize:13,fontWeight:700}}>Total dépenses</span><span style={{fontWeight:800,fontSize:16,color:C.bad}}>{fr(cur.burned)} kcal</span></div>
+          <div style={row}><span style={{fontSize:13,fontWeight:700}}>🍽️ Calories consommées</span><span style={{fontWeight:800,fontSize:16,color:C.ok}}>{cur.consumed?fr(cur.consumed):"—"} kcal</span></div>
+          {cur.balance!=null&&(()=>{
+            const isD=cur.balance<0, abs=Math.abs(cur.balance), reached=isD&&abs>=cur.target;
+            const col = reached?C.ok : isD&&abs>=cur.target*ALERT_RATIO?C.warn : isD?C.warn : C.bad;
+            return <div style={{marginTop:12,background:C.inner,borderRadius:12,padding:14,textAlign:"center"}}>
+              <div style={{fontSize:12,color:C.dim,marginBottom:4}}>Balance nette</div>
+              <div style={{fontSize:40,fontWeight:900,color:col,lineHeight:1}}>{isD?"−":"+"}{fr(abs)}</div>
+              <div style={{fontSize:13,color:C.dim,marginTop:4}}>kcal</div>
+              <Bar ratio={isD?abs/cur.target:0}/>
+              <div style={{marginTop:8,fontSize:12,fontWeight:700,color:col}}>
+                {reached?`🎯 Objectif de déficit (${fr(cur.target)} kcal) atteint`:isD?`Encore ${fr(cur.target-abs)} kcal pour l'objectif de ${fr(cur.target)} kcal`:`Surplus de ${fr(abs)} kcal`}
+              </div>
+            </div>;
+          })()}
+          <div style={{fontSize:10,color:C.dim,marginTop:10}}>Métabolisme : {cur.comp.bmrSrc}{goalFor(goals,monthKey(activeDate)).deficit==null?` · objectif de déficit par défaut (${DEFAULT_DEFICIT} kcal), à définir dans 🎯 Objectifs`:""}</div>
+        </Card>
+
+        {cur.sessions.length>0&&<Card>
+          <Title>🏅 Activités du jour</Title>
+          {cur.sessions.map(s=><div key={s.id} style={row}><span style={{fontSize:13,color:C.muted}}>{s.icon} {s.label}</span><span style={{fontWeight:700,color:C.tqL}}>{s.kcal} kcal</span></div>)}
+        </Card>}
+        {phaseActive&&<Card style={{borderColor:PHASES[phaseActive.phase].color+"55"}}>
+          <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+            <span style={{fontSize:22}}>{PHASES[phaseActive.phase].icon}</span>
+            <div style={{fontSize:12,lineHeight:1.45}}>
+              <div style={{fontWeight:700,color:PHASES[phaseActive.phase].color}}>Phase {PHASES[phaseActive.phase].label.toLowerCase()}{phaseActive.day&&!phaseActive.manual?` · J${phaseActive.day}`:""}{phaseActive.predicted?" (estimé)":""}{days[activeDate]?.mood?` · ${moodOf(days[activeDate].mood).icon} ${moodOf(days[activeDate].mood).label}`:""}</div>
+              <div style={{color:C.muted}}>{PHASES[phaseActive.phase].tip}</div>
+            </div>
+          </div>
+        </Card>}
+      </>}
+
+      {/* ── SPORT ── */}
+      {tab==="sport"&&<>
+        {renderDayBar()}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7,marginBottom:14}}>
+          {[["🏅","Jours actifs",curMs.act],["🥊","Boxe",curMs.boxe],["🛼","Roller",curMs.roller]].map(([ic,l,c])=>(
+            <div key={l} style={{background:C.card,border:`1px solid ${c.ratio!=null&&c.ratio<ALERT_RATIO&&c.elapsed>=MONTH_ALERT_MIN_DAYS?"#7f1d1d":C.border}`,borderRadius:12,padding:"9px 10px"}}>
+              <div style={{fontSize:10,color:C.dim}}>{ic} {l} · mois</div>
+              <div style={{fontSize:17,fontWeight:800,marginTop:2}}>{c.value}<span style={{fontSize:11,color:C.dim,fontWeight:500}}> / {c.target}</span></div>
+              <div style={{fontSize:10,color:stColor(c.ratio),fontWeight:700,marginTop:1}}>{c.est!=null?`estim. ${c.est}`:"—"}</div>
+            </div>
+          ))}
+        </div>
+        {cur.sessions.length>0&&<div style={{marginBottom:14}}>
+          <div style={{fontSize:13,color:C.muted,fontWeight:600,marginBottom:8}}>📋 Séances enregistrées</div>
+          {cur.sessions.map(s=>(
+            <div key={s.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 14px",marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <span style={{fontSize:22}}>{s.icon}</span>
+                <div>
+                  <div style={{fontWeight:700,fontSize:13}}>{s.label}</div>
+                  <div style={{fontSize:11,color:C.dim}}>
+                    {[s.time&&`${s.time} min`, s.distance&&`${fr(s.distance,2)} km`, s.sport==="course"&&s.time&&s.distance&&fmtPace(s.time,s.distance), s.hr&&`${s.hr} bpm`, s.estimated&&"kcal estimées"].filter(Boolean).join(" · ")||"Saisie manuelle"}
+                  </div>
+                </div>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{textAlign:"right"}}><div style={{fontSize:20,fontWeight:800,color:C.tqL}}>{s.kcal}</div><div style={{fontSize:10,color:C.dim}}>kcal</div></div>
+                <button onClick={()=>removeSession(s.id)} style={{background:C.inner,border:`1px solid ${C.border}`,borderRadius:8,color:C.bad,padding:"5px 8px",fontSize:12}}>✕</button>
+              </div>
+            </div>
+          ))}
+          <div style={{background:C.card,borderRadius:10,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",borderLeft:`3px solid ${C.tq}`}}>
+            <span style={{fontSize:13,color:C.muted}}>Total sport du jour</span><span style={{fontWeight:800,color:C.tqL,fontSize:18}}>{cur.sport} kcal</span>
+          </div>
+        </div>}
+
+        <Card>
+          <Title>➕ Ajouter une activité</Title>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:7}}>
+            {SPORTS.map(s=>(
+              <button key={s.id} onClick={()=>{setSport(s.id);setParams({});}} style={{padding:"11px 2px",borderRadius:12,border:"1.5px solid",borderColor:sport===s.id?C.tq:C.border,background:sport===s.id?C.tqDeep:C.inner,color:sport===s.id?C.text:C.muted,fontSize:10.5,fontWeight:sport===s.id?700:500,lineHeight:1.2}}>
+                <div style={{fontSize:21,marginBottom:4}}>{s.icon}</div>{s.label}
+              </button>
+            ))}
+          </div>
+        </Card>
+        {sp&&<Card><Title>{sp.icon} {sp.label}</Title>{renderInputs()}</Card>}
+        {sp&&calc.ready&&<div style={{background:C.inner,border:`2px solid ${C.tq}`,borderRadius:16,padding:20,marginBottom:12,textAlign:"center"}}>
+          <div style={{fontSize:13,color:C.muted,marginBottom:4}}>{calc.computed||calc.estimated?"Calories estimées":"Calories brûlées"}</div>
+          <div style={{fontSize:52,fontWeight:900,color:C.tqL,lineHeight:1}}>{calc.kcal}</div>
+          <div style={{fontSize:16,color:C.dim,marginBottom:6}}>kcal</div>
+          {calc.rate&&<div style={{fontSize:12,color:C.dim}}>{fr(calc.rate,1)} kcal/min × {num(params.time)} min</div>}
+          {calc.met&&<div style={{fontSize:12,color:C.dim}}>MET {fr(calc.met,1)} × {fr(cur.comp.aw,1)} kg (masse maigre + 20 % masse grasse) × {num(params.time)} min</div>}
+          {calc.estimated&&<div style={{fontSize:11,color:C.warn,marginTop:6}}>Pas de calories Fitbit saisies : estimation selon ta composition corporelle</div>}
+          {!calc.met&&!calc.rate&&sp.mode==="fitbit"&&<div style={{fontSize:12,color:C.dim}}>Valeur Fitbit</div>}
+        </div>}
+        {sp&&<button onClick={addSession} disabled={!calc.ready} style={btnPrimary(calc.ready)}>{calc.ready?`✅ Enregistrer · ${calc.kcal} kcal`:"Remplis les champs pour enregistrer"}</button>}
+      </>}
+
+      {/* ── SEMAINE ── */}
+      {tab==="semaine"&&<>
+        {renderDayBar()}
+        {monday===thisMonday&&<AlertList alerts={alerts.filter(a=>!a.title.includes("mois"))}/>}
+        <Card>
+          <Title sub={ws.isPast?"Semaine terminée":"Estimations calculées sur les journées terminées"}>🎯 Objectifs de la semaine</Title>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <GoalTile icon="🏅" label={`Jours actifs · ${MONTHS[+weekRefDate.slice(5,7)-1].toLowerCase()}`} value={`${weekMs.act.value} j`} target={`${TARGET_ACTIVE_MONTH} j`} ratio={weekMs.act.ratio}
+              badge={weekMs.act.est!=null?`≈ ${weekMs.act.est} j`:"—"}
+              sub={`Cette semaine : ${ws.act.value} j actif(s), ${ws.sessions} séance(s). Estimation fin de mois : ${weekMs.act.est??"—"} j`}/>
+            <GoalTile icon="😴" label="Sommeil moyen" value={fmtSleep(ws.sleep.value)} target="7h30" ratio={ws.sleep.ratio} sub={`${ws.sleep.okDays} nuit(s) ≥ 7h30`}/>
+            <GoalTile icon="👟" label="Pas moyens / jour" value={ws.steps.value==null?"—":fr(ws.steps.value)} target={fr(TARGET_STEPS)} ratio={ws.steps.ratio} sub={`${ws.steps.okDays} jour(s) ≥ 6 000 pas`}/>
+            <GoalTile icon="🔥" label="Déficit moyen" value={ws.deficit.value==null?"—":ws.deficit.value>0?`+${fr(ws.deficit.value)}`:fr(-ws.deficit.value)} target={`${fr(ws.deficit.target)} kcal`} ratio={ws.deficit.ratio} sub={`${ws.deficit.value>0?"Surplus en moyenne · ":""}${ws.deficit.okDays} jour(s) objectif atteint`}/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:10}}>
+            {[["🥊","Boxe",weekMs.boxe],["🛼","Roller",weekMs.roller]].map(([ic,l,c])=>(
+              <div key={l} style={{background:C.inner,borderRadius:12,padding:"10px 12px",border:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:12,color:C.muted}}>{ic} {l} (mois)</span>
+                <span style={{fontWeight:800}}>{c.value}<span style={{color:C.dim,fontWeight:500,fontSize:11}}> / {c.target}</span></span>
+              </div>
+            ))}
+          </div>
+          <div style={{fontSize:10,color:C.dim,marginTop:10}}>Repère blanc sur les barres = seuil d'alerte à 80 %</div>
+        </Card>
+
+        <Card>
+          <Title>📋 Détail de la semaine</Title>
+          {ws.stats.map((s,i)=>{
+            const ph=phaseOf(s.date);
+            return <div key={i} onClick={()=>{ if(s.date<=today){ pickDate(s.date); setTab("jour"); } }} style={{...row,cursor:s.date<=today?"pointer":"default",opacity:s.date>today?0.35:1}}>
+              <div style={{display:"flex",alignItems:"center",gap:7}}>
+                <span style={{fontWeight:700,fontSize:13,color:s.date===today?C.tqL:C.text,minWidth:30}}>{DAYS[i]}</span>
+                {ph&&<span style={{width:6,height:6,borderRadius:99,background:PHASES[ph.phase].color}}/>}
+                <span style={{fontSize:14,filter:s.active?"none":"grayscale(1) opacity(0.25)"}}>🏅</span>
+                <span style={{fontSize:14,filter:s.sleepMin>=TARGET_SLEEP_MIN?"none":"grayscale(1) opacity(0.25)"}}>😴</span>
+                <span style={{fontSize:14,filter:s.steps>=TARGET_STEPS?"none":"grayscale(1) opacity(0.25)"}}>👟</span>
+                <span style={{fontSize:14,filter:s.balance!=null&&s.balance<=-s.target?"none":"grayscale(1) opacity(0.25)"}}>🔥</span>
+              </div>
+              <div style={{display:"flex",gap:8,alignItems:"center",fontSize:11,color:C.dim}}>
+                {s.sleepMin!=null&&<span>{fmtSleep(s.sleepMin)}</span>}
+                {s.steps>0&&<span>{fr(s.steps)}👟</span>}
+                {s.balance!=null?<span style={{fontSize:12,fontWeight:700,color:s.balance<=-s.target?C.ok:s.balance<0?C.warn:C.bad}}>{s.balance>0?"+":""}{fr(s.balance)}</span>:<span style={{color:"#2a3a38"}}>—</span>}
+              </div>
+            </div>;
+          })}
+        </Card>
+      </>}
+
+      {/* ── OBJECTIFS (mois) ── */}
+      {tab==="objectifs"&&(()=>{
+        const g = goals[goalMonth]||{};
+        const ms = goalMonth===monthKey(today) ? curMs : monthStats(goalMonth, ctx);
+        const isCur = goalMonth===monthKey(today), isFut = goalMonth>monthKey(today);
+        const remDays = isCur ? diffDays(monthEnd(goalMonth),today)+1 : isFut ? daysInMonth(goalMonth) : 0;
+        const fromW = isCur ? compNow.weight : ms.weight.start;
+        const gw = num(g.weight);
+        const sugg = gw!=null && remDays>0 && fromW!=null && fromW>gw ? Math.round((fromW-gw)*KCAL_PER_KG/remDays) : null;
+        const lastW = weighins.length ? weighins[weighins.length-1] : null;
+        const lastPh = lastW ? phaseOf(lastW.date) : null;
+        return <>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+            <button onClick={()=>setGoalMonth(m=>shiftMonth(m,-1))} style={{...btnGhost,padding:"4px 12px",fontSize:16}}>‹</button>
+            <div style={{fontWeight:800,fontSize:16}}>{monthLabel(goalMonth)}</div>
+            <button onClick={()=>setGoalMonth(m=>shiftMonth(m,1))} disabled={goalMonth>=shiftMonth(monthKey(today),1)} style={{...btnGhost,padding:"4px 12px",fontSize:16,opacity:goalMonth>=shiftMonth(monthKey(today),1)?0.25:1}}>›</button>
+          </div>
+          {isCur&&<AlertList alerts={alerts}/>}
+
+          <Card>
+            <Title sub="Fixe tes cibles pour la fin du mois">🎯 Objectifs mensuels</Title>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+              <div><label style={lbl}>⚖️ Poids visé (kg)</label>{NumInput(g.weight,v=>setGoal("weight",v),fromW!=null?`ex : ${fr(fromW-1,1)}`:"ex : 64","0.1")}</div>
+              <div><label style={lbl}>💧 % graisse visé</label>{NumInput(g.fatPct,v=>setGoal("fatPct",v),"ex : 30","0.1")}</div>
+            </div>
+            <label style={lbl}>🔥 Déficit calorique par jour (kcal)</label>
+            {NumInput(g.deficit,v=>setGoal("deficit",v),`par défaut ${DEFAULT_DEFICIT}`,"10")}
+            {sugg!=null&&<div style={{marginTop:10,background:C.inner,borderRadius:10,padding:10,fontSize:12,lineHeight:1.45}}>
+              <div style={{color:C.muted}}>Pour passer de {fr(fromW,1)} à {fr(gw,1)} kg d'ici le {fmt(monthEnd(goalMonth))} ({remDays} j) :</div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4}}>
+                <span style={{fontWeight:800,color:C.tqL,fontSize:15}}>≈ {fr(sugg)} kcal / jour</span>
+                <button onClick={()=>setGoal("deficit",String(sugg))} style={btnGhost}>Utiliser</button>
+              </div>
+              {sugg>1000&&<div style={{color:C.warn,marginTop:6}}>Objectif très ambitieux pour ce délai. Un rythme de 0,5 à 1 kg par semaine est généralement plus tenable : tu peux viser un poids un peu moins bas ce mois-ci.</div>}
+            </div>}
+          </Card>
+
+          <Card>
+            <Title sub={isFut?"Le suivi démarrera le 1er du mois":"Estimation fin de mois au rythme actuel"}>🏅 Activité du mois</Title>
+            <CountRow icon="🏅" label="Jours avec activité" c={ms.act} unit="j"/>
+            <CountRow icon="🥊" label="Séances de boxe" c={ms.boxe} unit="séances"/>
+            <CountRow icon="🛼" label="Séances de roller" c={ms.roller} unit="séances"/>
+            <div style={{fontSize:10,color:C.dim,marginTop:2}}>Les alertes s'activent à partir du {MONTH_ALERT_MIN_DAYS}<sup>e</sup> jour du mois.</div>
+          </Card>
+
+          <Card>
+            <Title sub={isFut?"Les estimations démarreront le 1er du mois":"Projection fin de mois d'après la tendance des pesées (5 dernières semaines)"}>📈 Suivi des objectifs du mois</Title>
+            {[
+              ["⚖️","Poids",ms.weight,"kg",1],
+              ["💧","% graisse",ms.fat,"%",1],
+            ].map(([ic,l,t,u,dec])=>(
+              <div key={l} style={{background:C.inner,borderRadius:12,padding:12,marginBottom:10,border:`1px solid ${t.ratio!=null&&t.ratio<ALERT_RATIO?"#7f1d1d":C.border}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{fontWeight:700,fontSize:13}}>{ic} {l}</span>
+                  <span style={{fontSize:11,fontWeight:800,color:stColor(t.ratio)}}>{t.goal==null?"Pas d'objectif":`${stLabel(t.ratio)}${t.ratio!=null?` · ${Math.round(Math.max(0,t.ratio)*100)} %`:""}`}</span>
+                </div>
+                {t.goal!=null&&<>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:4,marginTop:10,textAlign:"center",fontSize:11}}>
+                    <div><div style={{color:C.dim}}>Départ</div><div style={{fontWeight:700}}>{fr(t.start,dec)}{u}</div></div>
+                    <div><div style={{color:C.dim}}>Actuel</div><div style={{fontWeight:700}}>{t.latest?fr(t.latest[l==="Poids"?"weight":"fatPct"],dec)+u:"—"}</div></div>
+                    <div><div style={{color:C.dim}}>Estimé fin</div><div style={{fontWeight:700,color:stColor(t.ratio)}}>{t.proj!=null?fr(t.proj,dec)+u:"—"}</div></div>
+                    <div><div style={{color:C.dim}}>Objectif</div><div style={{fontWeight:700,color:C.tqL}}>{fr(t.goal,dec)}{u}</div></div>
+                  </div>
+                  <Bar ratio={t.ratio}/>
+                  {!isFut&&t.expected!=null&&<div style={{fontSize:10,color:C.dim,marginTop:6}}>Trajectoire idéale aujourd'hui : {fr(t.expected,dec)} {u}{t.proj==null?" · ajoute des pesées sur au moins 6 jours pour une estimation":""}</div>}
+                </>}
+              </div>
+            ))}
+            <div style={{background:C.inner,borderRadius:12,padding:12,border:`1px solid ${ms.deficit.ratio!=null&&ms.deficit.ratio<ALERT_RATIO?"#7f1d1d":C.border}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontWeight:700,fontSize:13}}>🔥 Déficit moyen du mois</span>
+                <span style={{fontSize:11,fontWeight:800,color:stColor(ms.deficit.ratio)}}>{stLabel(ms.deficit.ratio)}{ms.deficit.ratio!=null?` · ${Math.round(ms.deficit.ratio*100)} %`:""}</span>
+              </div>
+              <div style={{fontSize:20,fontWeight:800,marginTop:6}}>{ms.deficit.value==null?"—":ms.deficit.value>0?`+${fr(ms.deficit.value)} (surplus)`:fr(-ms.deficit.value)}<span style={{fontSize:12,color:C.dim,fontWeight:500}}> / {fr(ms.deficit.target)} kcal · {ms.deficit.basis} jour(s) saisi(s)</span></div>
+              <Bar ratio={ms.deficit.ratio}/>
+            </div>
+          </Card>
+
+          <Card>
+            <Title sub="Relevés Boditrax : tout est optionnel sauf au moins une valeur">⚖️ Pesée & composition</Title>
+            <div style={{marginBottom:10}}><label style={lbl}>📅 Date</label><input type="date" max={today} value={wForm.date} onChange={e=>setWForm(f=>({...f,date:e.target.value}))} style={inp}/></div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div><label style={lbl}>⚖️ Poids (kg)</label>{NumInput(wForm.weight,v=>setWForm(f=>({...f,weight:v})),"ex : 65,4","0.1")}</div>
+              <div><label style={lbl}>💧 % graisse</label>{NumInput(wForm.fatPct,v=>setWForm(f=>({...f,fatPct:v})),"ex : 32,1","0.1")}</div>
+              <div><label style={lbl}>💪 Masse musculaire (kg)</label>{NumInput(wForm.muscle,v=>setWForm(f=>({...f,muscle:v})),"ex : 41,8","0.1")}</div>
+              <div><label style={lbl}>🔥 Métabolisme (kcal)</label>{NumInput(wForm.bmr,v=>setWForm(f=>({...f,bmr:v})),"ex : 1390","1")}</div>
+            </div>
+            <button onClick={saveWeighin} style={{...btnPrimary(true),marginTop:12,padding:12,fontSize:14}}>Enregistrer la pesée</button>
+            {lastPh&&(lastPh.phase==="luteale"||lastPh.phase==="menstruelle")&&<div style={{fontSize:11,color:PHASES[lastPh.phase].color,marginTop:10}}>{PHASES[lastPh.phase].icon} Dernière pesée en phase {PHASES[lastPh.phase].label.toLowerCase()} : une rétention d'eau peut ajouter temporairement quelques centaines de grammes.</div>}
+            {weighins.length>0&&<div style={{marginTop:12}}>
+              {[...weighins].reverse().slice(0,8).map(w=>(
+                <div key={w.date} style={{...row,fontSize:12}}>
+                  <span style={{color:C.muted,minWidth:70}}>{fmtFull(w.date)}</span>
+                  <span style={{flex:1,display:"flex",gap:10,justifyContent:"flex-end",color:C.text}}>
+                    {w.weight!=null&&<b>{fr(w.weight,1)} kg</b>}{w.fatPct!=null&&<span style={{color:"#f59e0b"}}>{fr(w.fatPct,1)} %</span>}{w.muscle!=null&&<span style={{color:C.ok}}>{fr(w.muscle,1)} kg 💪</span>}
+                  </span>
+                  <button onClick={()=>setWeighins(l=>l.filter(x=>x.date!==w.date))} style={{background:"none",border:"none",color:C.bad,marginLeft:10,fontSize:12}}>✕</button>
+                </div>
+              ))}
+            </div>}
+          </Card>
+
+          <Card>
+            <Title sub="10 dernières pesées">📊 Évolution poids & masse grasse</Title>
+            <WeightChart weighins={weighins} goalW={gw}/>
+          </Card>
+        </>;
+      })()}
+
+      {/* ── CYCLE ── */}
+      {tab==="cycle"&&(()=>{
+        const { len, fromHistory } = cycleLength(cycle);
+        const r = phaseRanges(len, cycle.periodLen);
+        const sorted=[...cycle.starts].sort().reverse();
+        const calcToday = phaseFor(today, cycle);
+        const calcActive = phaseFor(activeDate, cycle);
+        const dActive = days[activeDate]||{};
+        const selPhase = dActive.phase || calcActive?.phase || null;
+
+        // Croisement semaine
+        const weekMoods = ws.stats.map(s=>days[s.date]?.mood).filter(Boolean);
+        const topMood = arr => { const c={}; arr.forEach(m=>c[m]=(c[m]||0)+1); const k=Object.keys(c).sort((a,b)=>c[b]-c[a])[0]; return k?moodOf(k):null; };
+
+        // Historique par phase et par humeur (120 derniers jours)
+        const first=[...Object.keys(days),...cycle.starts].sort()[0];
+        const from = !first ? null : diffDays(today,first)>120 ? addDays(today,-120) : first;
+        const agg = Object.fromEntries(PHASE_ORDER.map(p=>[p,{n:0,active:0,kcal:0,moods:[]}]));
+        const byMood = { haut:{n:0,active:0,kcal:0}, bas:{n:0,active:0,kcal:0} };
+        if(from) for(let d=from; d<=today; d=addDays(d,1)){
+          const dd=days[d]||{}, ss=dd.sessions||[], kc=ss.reduce((x,y)=>x+y.kcal,0), ph=phaseOf(d);
+          if(ph){ const a=agg[ph.phase]; a.n++; if(ss.length) a.active++; a.kcal+=kc; if(dd.mood) a.moods.push(dd.mood); }
+          const m=moodOf(dd.mood);
+          if(m){ const g=m.score>=4?byMood.haut:m.score<=2?byMood.bas:null; if(g){ g.n++; if(ss.length) g.active++; g.kcal+=kc; } }
+        }
+
+        return <>
+          {renderDayBar()}
+
+          <Card>
+            <Title sub={activeDate===today?"Aujourd'hui":fmtFull(activeDate)}>📝 Phase & état d'esprit</Title>
+            <label style={lbl}>Phase du cycle {!dActive.phase&&calcActive?<span style={{color:C.dim}}>(suggérée d'après tes dates)</span>:null}</label>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:14}}>
+              {PHASE_ORDER.map(p=>{
+                const on=selPhase===p, col=PHASES[p].color;
+                return <button key={p} onClick={()=>updDay(activeDate,{phase:dActive.phase===p?null:p})}
+                  style={{padding:"10px 8px",borderRadius:10,border:`1.5px solid ${on?col:C.border}`,background:on?col+"22":C.inner,color:on?col:C.muted,fontWeight:on?800:500,fontSize:13,opacity:on&&!dActive.phase?0.75:1}}>
+                  {PHASES[p].icon} {PHASES[p].label}
+                </button>;
+              })}
+            </div>
+            <label style={lbl}>État d'esprit</label>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7}}>
+              {MOODS.map(m=>{
+                const on=dActive.mood===m.id;
+                return <button key={m.id} onClick={()=>updDay(activeDate,{mood:on?null:m.id})} style={{...chip(on),padding:"9px 4px",fontSize:12}}>
+                  <div style={{fontSize:20,marginBottom:2}}>{m.icon}</div>{m.label}
+                </button>;
+              })}
+            </div>
+          </Card>
+
+          <Card>
+            <Title sub={`Semaine du ${fmt(monday)} au ${fmt(addDays(monday,6))}`}>🔀 Cycle, humeur & sport de la semaine</Title>
+            {ws.stats.map((st,i)=>{
+              const ph=phaseOf(st.date), m=moodOf(days[st.date]?.mood), fut=st.date>today;
+              return <div key={i} onClick={()=>{ if(!fut) pickDate(st.date); }} style={{...row,opacity:fut?0.3:1,cursor:fut?"default":"pointer",background:st.date===activeDate?C.tqDeep+"66":"transparent",borderRadius:6,padding:"8px 4px"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
+                  <span style={{fontWeight:700,fontSize:13,minWidth:30,color:st.date===today?C.tqL:C.text}}>{DAYS[i]}</span>
+                  <span style={{fontSize:11,fontWeight:700,color:ph?PHASES[ph.phase].color:C.dim,minWidth:78}}>{ph?`${PHASES[ph.phase].icon} ${PHASES[ph.phase].label}`:"—"}</span>
+                  <span style={{fontSize:17,minWidth:22}}>{m?m.icon:<span style={{color:"#2a3a38",fontSize:12}}>·</span>}</span>
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:14}}>{st.sessions.map(s=>s.icon).join("")}</span>
+                  <span style={{fontSize:12,fontWeight:700,color:st.sport?C.tqL:C.dim,minWidth:52,textAlign:"right"}}>{st.sport?`${st.sport} kcal`:"repos"}</span>
+                </div>
+              </div>;
+            })}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginTop:12,textAlign:"center",fontSize:11}}>
+              <div style={{background:C.inner,borderRadius:10,padding:8}}><div style={{color:C.dim}}>Jours actifs</div><div style={{fontWeight:800,fontSize:16}}>{ws.act.value}</div></div>
+              <div style={{background:C.inner,borderRadius:10,padding:8}}><div style={{color:C.dim}}>Sport</div><div style={{fontWeight:800,fontSize:16,color:C.tqL}}>{fr(ws.totalSport)}</div><div style={{color:C.dim,fontSize:9}}>kcal</div></div>
+              <div style={{background:C.inner,borderRadius:10,padding:8}}><div style={{color:C.dim}}>Humeur fréquente</div><div style={{fontSize:18}}>{topMood(weekMoods)?.icon||"—"}</div></div>
+            </div>
+          </Card>
+
+          <Card>
+            <Title sub={from?`Depuis le ${fmtFull(from)}`:"Renseigne tes phases et ton humeur pour voir apparaître les tendances"}>📊 Tendances par phase</Title>
+            {PHASE_ORDER.map(p=>{
+              const a=agg[p], tm=topMood(a.moods);
+              return <div key={p} style={{...row,fontSize:12}}>
+                <span style={{fontWeight:700,color:PHASES[p].color,minWidth:104}}>{PHASES[p].icon} {PHASES[p].label}</span>
+                {a.n? <>
+                  <span style={{color:C.muted}}>{Math.round(a.active/a.n*100)} % jours actifs</span>
+                  <span style={{color:C.tqL,fontWeight:700,minWidth:62,textAlign:"right"}}>{fr(a.kcal/a.n)} kcal/j</span>
+                  <span style={{fontSize:16,minWidth:22,textAlign:"right"}}>{tm?.icon||"·"}</span>
+                </> : <span style={{color:C.dim}}>pas encore de données</span>}
+              </div>;
+            })}
+            {byMood.haut.n>=2&&byMood.bas.n>=2&&<div style={{marginTop:12,background:C.inner,borderRadius:10,padding:10,fontSize:12,lineHeight:1.5,color:C.muted}}>
+              Les jours où tu te sens 💪/🙂, tu es active <b style={{color:C.text}}>{Math.round(byMood.haut.active/byMood.haut.n*100)} %</b> du temps ({fr(byMood.haut.kcal/byMood.haut.n)} kcal de sport/jour).
+              Les jours 🥱/😣/😔 : <b style={{color:C.text}}>{Math.round(byMood.bas.active/byMood.bas.n*100)} %</b> ({fr(byMood.bas.kcal/byMood.bas.n)} kcal/jour).
+            </div>}
+            <div style={{fontSize:10,color:C.dim,marginTop:8}}>La colonne de droite indique l'humeur la plus fréquente dans chaque phase.</div>
+          </Card>
+
+          {calcToday?<Card style={{textAlign:"center"}}>
+            <CycleRing len={len} periodLen={cycle.periodLen} day={calcToday.day} phase={calcToday.phase}/>
+            <div style={{fontSize:13,color:PHASES[calcToday.phase].color,fontWeight:700,marginTop:4}}>{PHASES[calcToday.phase].energy}</div>
+            {phaseToday?.manual&&phaseToday.phase!==calcToday.phase&&<div style={{fontSize:11,color:C.muted,marginTop:6}}>Tu as indiqué la phase {PHASES[phaseToday.phase].label.toLowerCase()} aujourd'hui : c'est elle qui est utilisée dans l'app.</div>}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:14,fontSize:12}}>
+              <div style={{background:C.inner,borderRadius:10,padding:10}}><div style={{color:C.dim}}>Prochaines règles</div><div style={{fontWeight:800,fontSize:15,color:PHASES.menstruelle.color}}>{fmt(calcToday.next)}</div><div style={{color:C.dim,fontSize:10}}>dans {diffDays(calcToday.next,today)} j</div></div>
+              <div style={{background:C.inner,borderRadius:10,padding:10}}><div style={{color:C.dim}}>Durée du cycle</div><div style={{fontWeight:800,fontSize:15}}>{len} jours</div><div style={{color:C.dim,fontSize:10}}>{fromHistory?"moyenne de l'historique":"valeur saisie"}</div></div>
+            </div>
+            {calcToday.predicted&&<div style={{fontSize:11,color:C.warn,marginTop:10}}>Les règles prévues ne sont pas encore enregistrées : la phase est estimée.</div>}
+          </Card>:<Card><Title sub="Indique le premier jour de tes dernières règles pour avoir les estimations automatiques">🌙 Calendrier du cycle</Title></Card>}
+
+          <Card>
+            <Title>🩸 Début des règles</Title>
+            <button onClick={()=>addPeriod(today)} disabled={cycle.starts.includes(today)} style={{...btnPrimary(!cycle.starts.includes(today)),marginBottom:12}}>{cycle.starts.includes(today)?"✓ Enregistré pour aujourd'hui":"Mes règles commencent aujourd'hui"}</button>
+            <label style={lbl}>Ou choisir une autre date</label>
+            <div style={{display:"flex",gap:8}}>
+              <input type="date" max={today} value={periodDate} onChange={e=>setPeriodDate(e.target.value)} style={{...inp,flex:1}}/>
+              <button onClick={()=>addPeriod(periodDate)} style={{...btnGhost,padding:"0 14px"}}>Ajouter</button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:12}}>
+              <div><label style={lbl}>Durée habituelle du cycle (j)</label>{NumInput(cycle.cycleLen,v=>setCycle(c=>({...c,cycleLen:v})),"28","1")}</div>
+              <div><label style={lbl}>Durée des règles (j)</label>{NumInput(cycle.periodLen,v=>setCycle(c=>({...c,periodLen:v})),"5","1")}</div>
+            </div>
+            {fromHistory&&<div style={{fontSize:10,color:C.dim,marginTop:6}}>Avec au moins deux dates enregistrées, la durée du cycle est calculée automatiquement.</div>}
+            {sorted.length>0&&<div style={{marginTop:12}}>
+              <div style={{fontSize:12,color:C.muted,marginBottom:4}}>Historique</div>
+              {sorted.slice(0,8).map((d,i)=>(
+                <div key={d} style={{...row,fontSize:12}}>
+                  <span>🩸 {fmtFull(d)}</span>
+                  <span style={{color:C.dim}}>{sorted[i+1]?`cycle de ${diffDays(d,sorted[i+1])} j`:""}</span>
+                  <button onClick={()=>removePeriod(d)} style={{background:"none",border:"none",color:C.bad,fontSize:12}}>✕</button>
+                </div>
+              ))}
+            </div>}
+          </Card>
+
+          <Card>
+            <Title sub="Repères généraux : chaque corps réagit différemment">Les 4 phases</Title>
+            {PHASE_ORDER.map(p=>{
+              const on=phaseToday?.phase===p, [a,b]=r[p];
+              return <div key={p} style={{background:on?PHASES[p].color+"14":C.inner,border:`1px solid ${on?PHASES[p].color:C.border}`,borderRadius:12,padding:12,marginBottom:8}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{fontWeight:800,color:PHASES[p].color,fontSize:13}}>{PHASES[p].icon} {PHASES[p].label}</span>
+                  <span style={{fontSize:11,color:C.dim}}>{b>=a?(a===b?`J${a}`:`J${a} → J${b}`):"—"}{on?" · en cours":""}</span>
+                </div>
+                <div style={{fontSize:12,color:C.text,marginTop:5,fontWeight:600}}>{PHASES[p].energy}</div>
+                <div style={{fontSize:12,color:C.muted,marginTop:3,lineHeight:1.45}}>{PHASES[p].tip}</div>
+              </div>;
+            })}
+            <div style={{fontSize:10,color:C.dim,marginTop:6}}>Les dates sont des estimations à partir de la durée du cycle : elles ne remplacent pas un avis médical et ne servent pas de méthode de contraception.</div>
+          </Card>
+        </>;
+      })()}
+    </div>
+
+    {/* ── PROFIL ── */}
+    {showProfile&&<div onClick={()=>setShowProfile(false)} style={{position:"fixed",inset:0,background:"#000000cc",zIndex:20,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:C.card,borderTop:`2px solid ${C.tq}`,borderRadius:"20px 20px 0 0",padding:18,width:"100%",maxWidth:560,maxHeight:"88vh",overflowY:"auto",paddingBottom:"max(18px, env(safe-area-inset-bottom))"}}>
+        <Title right={<button onClick={()=>setShowProfile(false)} style={btnGhost}>Fermer</button>}>👤 Profil</Title>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <div><label style={lbl}>Prénom</label><input type="text" value={profile.name||""} onChange={e=>setProfile(p=>({...p,name:e.target.value}))} style={inp}/></div>
+          <div><label style={lbl}>Âge</label>{NumInput(profile.age,v=>setProfile(p=>({...p,age:v})),"ans","1")}</div>
+          <div><label style={lbl}>Taille (cm)</label>{NumInput(profile.height,v=>setProfile(p=>({...p,height:v})),"161","1")}</div>
+          <div><label style={lbl}>Poids de départ (kg)</label>{NumInput(profile.weight,v=>setProfile(p=>({...p,weight:v})),"66","0.1")}</div>
+          <div><label style={lbl}>Objectif final (kg)</label>{NumInput(profile.finalGoal,v=>setProfile(p=>({...p,finalGoal:v})),"60","0.1")}</div>
+          <div><label style={lbl}>Métabolisme (kcal)</label>{NumInput(profile.bmr,v=>setProfile(p=>({...p,bmr:v})),"auto","1")}</div>
+        </div>
+        <div style={{marginTop:14,background:C.inner,borderRadius:12,padding:12,display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,fontSize:12,textAlign:"center"}}>
+          {[["Poids actuel",`${fr(compNow.weight,1)} kg`],["Masse maigre",`${fr(compNow.lbm,1)} kg${compNow.known?"":"*"}`],["Masse grasse",`${fr(compNow.fat,1)} kg${compNow.known?"":"*"}`],
+            ["Poids actif",`${fr(compNow.aw,1)} kg`],["Métabolisme",`${fr(compNow.bmr)} kcal`],["Reste à perdre",num(profile.finalGoal)!=null?`${fr(Math.max(0,compNow.weight-num(profile.finalGoal)),1)} kg`:"—"]].map(([k,v])=>(
+            <div key={k}><div style={{color:C.dim}}>{k}</div><div style={{fontWeight:700,color:C.tqXL}}>{v}</div></div>
+          ))}
+        </div>
+        {!compNow.known&&<div style={{fontSize:10,color:C.dim,marginTop:6}}>* estimation : ajoute ton % de graisse ou ta masse musculaire (Boditrax) dans 🎯 Objectifs pour un calcul précis.</div>}
+        <div style={{fontSize:11,color:C.dim,marginTop:10,lineHeight:1.45}}>Le métabolisme utilise en priorité la valeur Boditrax de la dernière pesée, puis celle du profil, sinon une formule. Les calories de la boxe, du roller et les estimations se basent sur le « poids actif » (masse maigre + 20 % de la masse grasse).</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:16}}>
+          <button onClick={exportData} style={{...btnGhost,padding:12}}>⬇️ Sauvegarder mes données</button>
+          <label style={{...btnGhost,padding:12,textAlign:"center",cursor:"pointer"}}>⬆️ Restaurer<input type="file" accept="application/json,.json" onChange={e=>{importData(e.target.files[0]); e.target.value="";}} style={{display:"none"}}/></label>
+        </div>
+        <div style={{fontSize:10,color:C.dim,marginTop:8}}>Les données restent sur ce téléphone. Pense à faire une sauvegarde de temps en temps.</div>
+      </div>
+    </div>}
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
